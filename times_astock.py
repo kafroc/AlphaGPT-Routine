@@ -18,7 +18,7 @@ import json
 import requests
 
 def _get_env(key, default, cast_type=str):
-    val = os.getenv(key)
+    val = os.environ.get(key)
     if val is None: return default
     if cast_type == bool:
         return val.lower() in ('true', '1', 't', 'y', 'yes')
@@ -37,6 +37,8 @@ FORCE_TRAIN = _get_env('FORCE_TRAIN', False, bool)  # 若为False且存在本地
 ONLY_LONG = _get_env('ONLY_LONG', True, bool)     # 是否仅做多，适配A股市场
 BEST_FORMULA = _get_env('BEST_FORMULA', '')       # 环境变量公式
 CODE_FORMULA = _get_env('CODE_FORMULA', '')       # 组合环境变量 (code:formula)
+
+print("len of code_formula = " + str(len(CODE_FORMULA)))
 
 # 解析 CODE_FORMULA
 if CODE_FORMULA and ':' in CODE_FORMULA:
