@@ -26,7 +26,7 @@ jobs:
         env:
           CODE_FORMULA: ${{ github.event.inputs.code_formula || vars.CODE_FORMULA || secrets.CODE_FORMULA }}
           INDEX_CODE: ${{ vars.INDEX_CODE || secrets.INDEX_CODE || '600901' }}
-          START_DATE: ${{ github.event.inputs.start_date || vars.START_DATE || '20140101' }}
+          START_DATE: ${{ github.event.inputs.start_date || vars.START_DATE || '20220101' }}
           END_DATE: ${{ github.event.inputs.end_date || vars.END_DATE || '20270101' }}
           BATCH_SIZE: ${{ vars.BATCH_SIZE || 1024 }}
           TRAIN_ITERATIONS: ${{ vars.TRAIN_ITERATIONS || 100 }}
