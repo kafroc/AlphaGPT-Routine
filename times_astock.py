@@ -947,16 +947,20 @@ def show_latest_positions(miner, engine, n_days=5):
                 ret_display = "0.00%"
             
             # 根据仓位构建信息
-            pos_info = f"持仓: {int(pos_value)}"
-            entry_info = f"入场: {d1_open}"
+            if int(pos_value) == 1:
+                pos_info = "明天买入"
+            else:
+                pos_info = "明天空仓"
+            entry_info = f"B: {d1_open}"
             
             if exit_date != 'N/A' and exit_date != date_str:
-                exit_info = f"离场: {exit_open} ({exit_date.split('-')[1]}-{exit_date.split('-')[2]})"
+                exit_info = f"S: {exit_open} ({exit_date.split('-')[1]}-{exit_date.split('-')[2]})"
             else:
                 exit_info = f"持仓天数: {int(chosen_offset) if chosen_offset and chosen_offset != 'N/A' else 'N/A'}"
             
-            markdown_line = f"- 📅 {date_str} {pos_info} | 收益: <font color=\"{color}\">{ret_display}</font> {entry_info} | {exit_info}"
-            markdown_lines.append(markdown_line)
+            if len(test_ret) - i < HOLD_PERIOD:
+                markdown_line = f"- 📅 {date_str.split('-')[1]}-{date_str.split('-')[2]} {pos_info} | 收益: <font color=\"{color}\">{ret_display}</font> {entry_info} | {exit_info}"
+                markdown_lines.append(markdown_line)
         
         # 保持原有的日志打印（不含表头和分隔线）
         if i == start_idx:
