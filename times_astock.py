@@ -7,6 +7,7 @@ import os
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import akshare as ak
+import baostock as bs
 from datetime import datetime
 import glob
 import hmac
@@ -25,7 +26,7 @@ def _get_env(key, default, cast_type=str):
         return val.lower() in ('true', 'yes') # 布尔值支持多种写法
     return cast_type(val)
 
-INDEX_CODE = _get_env('INDEX_CODE', '000001')
+INDEX_CODE = _get_env('INDEX_CODE', '002223')
 START_DATE = _get_env('START_DATE', '20220101') # 训练数据开始：近10年
 END_DATE = _get_env('END_DATE', '20270101') # 训练数据结束
 BATCH_SIZE = _get_env('BATCH_SIZE', 1024, int)
@@ -34,7 +35,7 @@ MAX_SEQ_LEN = _get_env('MAX_SEQ_LEN', 10, int)
 COST_RATE = _get_env('COST_RATE', 0.0004, float)
 LAST_NDAYS = _get_env('LAST_NDAYS', 42, int)      # 用于展示最近交易日的数量（默认42个交易日，约2个月）
 HOLD_PERIOD = _get_env('HOLD_PERIOD', 11, int)     # 持仓周期（包含买入当天后的第2..第HOLD_PERIOD天作为卖出候选）
-FORCE_TRAIN = _get_env('FORCE_TRAIN', False, bool)  # 若为False且存在本地公式，则直接加载；若为True则强制重新训练
+FORCE_TRAIN = _get_env('FORCE_TRAIN', True, bool)  # 若为False且存在本地公式，则直接加载；若为True则强制重新训练
 ONLY_LONG = _get_env('ONLY_LONG', True, bool)     # 是否仅做多，适配A股市场
 BEST_FORMULA = _get_env('BEST_FORMULA', '')       # 环境变量公式
 
@@ -145,38 +146,49 @@ class DataEngine:
     def load(self):
         print(f"Fetching Data of {INDEX_CODE}...")
 
-        df = ak.stock_zh_a_hist(symbol=INDEX_CODE, period="daily", start_date=START_DATE, end_date=END_DATE, adjust="qfq")
-        if df is None or df.empty:
+        try:
+            # try to fetch from akshare first, if fails then fallback to baostock
+            df = ak.stock_zh_a_hist(symbol=INDEX_CODE, period="daily", start_date=START_DATE, end_date=END_DATE, adjust="qfq")
+            df = df.sort_values('日期').reset_index(drop=True)
+            for col in ['开盘', '最高', '最低', '收盘', '成交量']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').ffill().bfill()
+            self.dates = pd.to_datetime(df['日期'])
+            close = df['收盘'].values.astype(np.float32)
+            open_ = df['开盘'].values.astype(np.float32)
+            high = df['最高'].values.astype(np.float32)
+            low = df['最低'].values.astype(np.float32)
+            vol = df['成交量'].values.astype(np.float32)
+        except Exception as e:
+            print(f"Akshare data fetch failed: {e}. Falling back to Baostock.")
+            lg = bs.login()
+            print('login respond error_code:'+lg.error_code)
+            print('login respond  error_msg:'+lg.error_msg)
             try:
-                df = ak.index_zh_a_hist(symbol=INDEX_CODE, period="daily", start_date=START_DATE, end_date=END_DATE)
-            except:
-                pass
-        if df is None or df.empty:
-            try:
-                df = ak.fund_etf_hist_em(symbol=INDEX_CODE, period="daily", start_date=START_DATE, end_date=END_DATE, adjust="qfq")
-            except:
-                pass
-        if df is None or df.empty:
-            try:
-                df = ak.fund_lof_hist_em(symbol=INDEX_CODE, period="daily", start_date=START_DATE, end_date=END_DATE, adjust="qfq")
-            except:
-                pass
-        if df is None or df.empty:
-            raise ValueError("未获取到数据，请检查接口调用或网络是否正常")
-
-        df = df.sort_values('日期').reset_index(drop=True)
-        # df.to_parquet(DATA_CACHE_PATH)
-
-        for col in ['开盘', '最高', '最低', '收盘', '成交量']:
-            df[col] = pd.to_numeric(df[col], errors='coerce').ffill().bfill()
-
-        self.dates = pd.to_datetime(df['日期'])
-
-        close = df['收盘'].values.astype(np.float32)
-        open_ = df['开盘'].values.astype(np.float32)
-        high = df['最高'].values.astype(np.float32)
-        low = df['最低'].values.astype(np.float32)
-        vol = df['成交量'].values.astype(np.float32)
+                if INDEX_CODE.startswith('6'):
+                    code = 'sh.' + INDEX_CODE
+                else:
+                    code = 'sz.' + INDEX_CODE
+                new_sd = pd.to_datetime(START_DATE).strftime('%Y-%m-%d')
+                new_ed = pd.to_datetime(END_DATE).strftime('%Y-%m-%d')
+                rs = bs.query_history_k_data_plus(code, "date,code,open,high,low,close,volume", start_date=new_sd, end_date=new_ed, frequency="d", adjustflag="2")
+                data_list = []
+                while (rs.error_code == '0') & rs.next():
+                    data_list.append(rs.get_row_data())
+                df = pd.DataFrame(data_list, columns=rs.fields)
+                df['date'] = pd.to_datetime(df['date'])
+                df[['open', 'high', 'low', 'close']] = df[['open', 'high', 'low', 'close']].apply(pd.to_numeric)
+                df = df.sort_values('date').reset_index(drop=True)
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').ffill().bfill()
+                self.dates = pd.to_datetime(df['date'])
+                close = df['close'].values.astype(np.float32)
+                open_ = df['open'].values.astype(np.float32)
+                high = df['high'].values.astype(np.float32)
+                low = df['low'].values.astype(np.float32)
+                vol = df['volume'].values.astype(np.float32)
+            except Exception as e2:
+                print(f"Baostock data fetch failed: {e2}. No data available.")
+                raise ValueError("未获取到数据，请检查接口调用或网络是否正常")
 
         # 特征因子'RET'
         ret = np.zeros_like(close)
@@ -203,7 +215,10 @@ class DataEngine:
         trend = np.nan_to_num(trend).astype(np.float32)
 
         # 特征因子'F_BUY_F_REPLAY'
-        f_balance,f_buy,f_replay,s_balance = get_margin_balance(INDEX_CODE, pd.to_datetime(df['日期']).dt.strftime('%Y%m%d').tolist())
+        try:
+            f_balance,f_buy,f_replay,s_balance = get_margin_balance(INDEX_CODE, pd.to_datetime(df['日期']).dt.strftime('%Y%m%d').tolist())
+        except Exception as e:
+            f_balance,f_buy,f_replay,s_balance = get_margin_balance(INDEX_CODE, pd.to_datetime(df['date']).dt.strftime('%Y%m%d').tolist())
         f_buy_f_replay = f_buy - f_replay
 
         # 计算oto收益率
@@ -410,7 +425,7 @@ class DeepQuantMiner:
                     sum_pnl = pnl.sum().item() * 100.0
                     
                     # 综合评分：胜率 × 平均收益
-                    reward_score = win_rate_pct * avg_pnl
+                    reward_score = win_rate_pct
             except Exception:
                 reward_score = 0.0
 
